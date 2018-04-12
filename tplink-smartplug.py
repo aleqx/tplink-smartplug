@@ -21,6 +21,8 @@
 #
 import socket
 import argparse
+import json
+import sys
 
 version = 0.1
 
@@ -33,7 +35,8 @@ def validIP(ip):
 	return ip 
 
 # Predefined Smart Plug Commands
-# For a full list of commands, consult tplink_commands.txt
+# For a full list of commands, consult tplink-smarthome-commands.txt
+# Also at https://github.com/softScheck/tplink-smartplug/blob/master/tplink-smarthome-commands.txt
 commands = {'info'     : '{"system":{"get_sysinfo":{}}}',
 			'on'       : '{"system":{"set_relay_state":{"state":1}}}',
 			'off'      : '{"system":{"set_relay_state":{"state":0}}}',
@@ -44,7 +47,13 @@ commands = {'info'     : '{"system":{"get_sysinfo":{}}}',
 			'countdown': '{"count_down":{"get_rules":{}}}',
 			'antitheft': '{"anti_theft":{"get_rules":{}}}',
 			'reboot'   : '{"system":{"reboot":{"delay":1}}}',
-			'reset'    : '{"system":{"reset":{"delay":1}}}'
+			'reset'    : '{"system":{"reset":{"delay":1}}}',
+			'emeter'   : '{"emeter":{"get_realtime":{}}}',
+			'current'  : '{"emeter":{"get_realtime":{}}}',
+			'voltage'  : '{"emeter":{"get_realtime":{}}}',
+			'power'    : '{"emeter":{"get_realtime":{}}}',
+			'total'    : '{"emeter":{"get_realtime":{}}}',
+			'gains'    : '{"emeter":{"get_vgain_igain":{}}}',
 }
 
 # Encryption and Decryption of TP-Link Smart Home Protocol
@@ -70,9 +79,12 @@ def decrypt(string):
 # Parse commandline arguments
 parser = argparse.ArgumentParser(description="TP-Link Wi-Fi Smart Plug Client v" + str(version))
 parser.add_argument("-t", "--target", metavar="<ip>", required=True, help="Target IP Address", type=validIP)
+parser.add_argument("-o", "--timeout", metavar="<seconds>", required=False, help="Timeout for connecting to target (default is 5)", type=int, default=5)
+parser.add_argument("-e", "--echo", help="Echo sent command as well", action='store_true')
 group = parser.add_mutually_exclusive_group(required=True)
 group.add_argument("-c", "--command", metavar="<command>", help="Preset command to send. Choices are: "+", ".join(commands), choices=commands) 
 group.add_argument("-j", "--json", metavar="<JSON string>", help="Full JSON string of command to send")
+# group.add_argument("-l", "--list", metavar="", help="Display the list of available JSON commands (contents of tplink-smarthome-commands.txt)")
 args = parser.parse_args()
 
 # Set target IP, port and command to send
@@ -88,12 +100,20 @@ else:
 # Send command and receive reply 
 try:
 	sock_tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+	sock_tcp.settimeout(args.timeout)
 	sock_tcp.connect((ip, port))
+	if args.echo:
+		# sys.stderr.write("%s\n" % cmd)
+		print cmd
 	sock_tcp.send(encrypt(cmd))
 	data = sock_tcp.recv(2048)
 	sock_tcp.close()
-	
-	print "Sent:     ", cmd
-	print "Received: ", decrypt(data[4:])
-except socket.error:
-	quit("Cound not connect to host " + ip + ":" + str(port))
+	response = decrypt(data[4:])
+	if args.command and any(c in args.command for c in ['voltage', 'current', 'power', 'total']):
+		obj = json.loads(response)
+		print obj['emeter']['get_realtime'][args.command]
+	else:
+		print response  # make parsable (to things like jq)
+except socket.error, e:
+	sys.stderr.write("Error: Cound not connect to %s:%d (%s)\n" % (ip, port, e))
+	raise SystemExit(10 if e == 'timed out' else 3)
